@@ -1,9 +1,12 @@
 import {importArticle, getArticleContent, getCategories, CATEGORY_ID} from "./framework.js";
 
 /**
- * A World Anvil Directory that allows you to see and manage your World Anvil content in Foundry VTT
+ * A World Anvil Directory that allows you to see and manage your World Anvil content in Foundry VTT.
+ * Uses the ApplicationV2 API (Foundry v13+).
  */
-export default class WorldAnvilBrowser extends foundry.applications.api.HandlebarsApplicationMixin(foundry.applications.api.ApplicationV2) {
+export default class WorldAnvilBrowser extends foundry.applications.api.HandlebarsApplicationMixin(
+  foundry.applications.api.ApplicationV2
+) {
 
   /**
    * An array of Articles which appear in this World
@@ -27,21 +30,18 @@ export default class WorldAnvilBrowser extends foundry.applications.api.Handleba
   /**
    * Flag whether to display draft articles
    * @type {boolean}
-   * @private
    */
   _displayDraft = true;
 
   /**
    * Flag whether to display WIP articles
    * @type {boolean}
-   * @private
    */
   _displayWIP = true;
 
   /**
    * Storing which categories were collapsed
    * @type {string[]}
-   * @private
    */
   _collapsedCategories = [];
 
@@ -50,22 +50,21 @@ export default class WorldAnvilBrowser extends foundry.applications.api.Handleba
   static DEFAULT_OPTIONS = {
     id: "world-anvil-browser",
     classes: ["world-anvil"],
+    window: {
+      title: "World Anvil"
+    },
     position: {
       width: 720,
-      height: "auto",
-    },
-    window: {
-      icon: "fas fa-gear", // You can now add an icon to the header
+      height: "auto"
     }
-  }
+  };
+
   static PARTS = {
-    details: {
-      template: "modules/world-anvil/templates/journal-details.hbs"
-    },
-    articles: {
-      template: "modules/world-anvil/templates/journal-articles.hbs"
+    main: {
+      template: "modules/world-anvil/templates/journal.hbs",
+      scrollable: [".world-anvil-container"]
     }
-  }
+  };
 
   /* -------------------------------------------- */
 
@@ -77,23 +76,39 @@ export default class WorldAnvilBrowser extends foundry.applications.api.Handleba
 
   /** @override */
   get title() {
-    return `World Anvil : ${this.anvil.world.name}`;
+    const anvil = game.modules.get("world-anvil").anvil;
+    return `World Anvil: ${anvil.world?.name ?? ""}`;
   }
 
   /* -------------------------------------------- */
+
   /** @override */
   async _prepareContext(options) {
+    const world = this.anvil.world || await this.anvil.getWorld(this.anvil.worldId);
     const tree = await this.getContentTree();
     this._refreshCategoryVisibility();
     return {
-      world: this.anvil.world,
-      tree: tree,
+      world,
+      tree,
       displayDraft: this._displayDraft,
       displayWIP: this._displayWIP
-    }
+    };
   }
 
-	/* -------------------------------------------- */
+  /* -------------------------------------------- */
+
+  /** @override */
+  _onRender(context, options) {
+    const html = this.element;
+    html.querySelectorAll(".article-title").forEach(el =>
+      el.addEventListener("click", this._onClickArticleTitle.bind(this)));
+    html.querySelectorAll("button.world-anvil-control").forEach(el =>
+      el.addEventListener("click", this._onClickControlButton.bind(this)));
+    html.querySelectorAll(".collapsed-icon").forEach(el =>
+      el.addEventListener("click", this._onClickCollapseFolder.bind(this)));
+  }
+
+  /* -------------------------------------------- */
 
   /**
    * Obtain and organize the articles for the World
@@ -138,7 +153,7 @@ export default class WorldAnvilBrowser extends foundry.applications.api.Handleba
         const unsorted = category.unsortedArticles.find( a => a.id === id );
         return unsorted ? [..._articles, unsorted] : _articles;
       }, []);
-      
+
       // Some may not be referenced (created after)
       const unreferencedArticles = category.unsortedArticles.filter(a => !category.articles.find( a2 => a == a2) );
       unreferencedArticles.sort( (a,b) => {
@@ -151,12 +166,11 @@ export default class WorldAnvilBrowser extends foundry.applications.api.Handleba
     return contentTree;
   }
 
-	/* -------------------------------------------- */
+  /* -------------------------------------------- */
 
   /**
    * Get all World Anvil articles and cache them to this Application instance
    * @return {Promise<object[]>}
-   * @private
    */
   async _getArticles() {
     if ( !this.articles ) {
@@ -168,51 +182,34 @@ export default class WorldAnvilBrowser extends foundry.applications.api.Handleba
 
   /* -------------------------------------------- */
 
-  bindEvent(selector, callback, {event="click"}={}) {
-    const els = this.element.querySelectorAll(selector);
-    els.forEach(el => el.addEventListener(event, callback.bind(this)) );
-  }
-
-  /** @override */
-  _onRender(context, options) {
-    super._onRender(context, options);
-    this.bindEvent(".article-title", this.#onClickArticleTitle);
-    this.bindEvent("button.world-anvil-control", this.#onClickControlButton);
-    this.bindEvent(".collapsed-icon", this.#onClickCollapseFolder);
-  }
-
-  /* -------------------------------------------- */
-
   /**
    * Handle left-click events on an article title
-   * @private
    */
-  async #onClickArticleTitle(event) {
+  async _onClickArticleTitle(event) {
     event.preventDefault();
     const el = event.currentTarget.closest(".article");
 
     // Already imported entry
     let entry = game.journal.get(el.dataset.entryId);
-    if ( entry ) return entry.sheet.render(true);
+    if ( entry ) return entry.sheet.render({force: true});
 
     // New temporary entry
     const article = await this.anvil.getArticle(el.dataset.articleId);
-    const content = await getArticleContent(article);
+    const content = getArticleContent(article);
     entry = new JournalEntry({
       name: article.title,
       content: content.html,
       img: content.img
     });
-    return entry.sheet.render(true, {editable: false});
+    return entry.sheet.render({force: true});
   }
 
-	/* -------------------------------------------- */
+  /* -------------------------------------------- */
 
-   /***
+  /**
    * Handle left-click events on a directory import button
-   * @private
    */
-  async #onClickControlButton(event) {
+  async _onClickControlButton(event) {
     const button = event.currentTarget;
     const action = button.dataset.action;
     switch (action) {
@@ -230,13 +227,6 @@ export default class WorldAnvilBrowser extends foundry.applications.api.Handleba
       case "toggle-wip":
         this._displayWIP = !this._displayWIP;
         return this.render();
-
-      // Wa-link
-      case "wa-link":
-        const url = button.dataset.url;
-        const tab = window.open(url, '_blank');
-        if(tab) {tab.focus();}
-        return;
 
       // Category control buttons
       case "sync-folder":
@@ -259,14 +249,13 @@ export default class WorldAnvilBrowser extends foundry.applications.api.Handleba
   /* -------------------------------------------- */
 
   /**
-   * Collapse inside the category inside journal display. (Or expand it)
-   * @private
+   * Collapse or expand a category in the journal display.
    */
-   async #onClickCollapseFolder(event) {
+  async _onClickCollapseFolder(event) {
     const icon = event.currentTarget;
     const categoryId = icon.closest(".category").dataset.categoryId;
     const alreadyCollapsed = this._collapsedCategories.includes( categoryId );
-    if( alreadyCollapsed ) {
+    if ( alreadyCollapsed ) {
       this._collapsedCategories = this._collapsedCategories.filter( id => id != categoryId );
     } else {
       this._collapsedCategories.push( categoryId );
@@ -278,9 +267,9 @@ export default class WorldAnvilBrowser extends foundry.applications.api.Handleba
 
   /**
    * Call WA to refresh the categories and the articles.
-   * Category tree will be rebuild when render() is called
+   * Category tree will be rebuild when render() is called.
    */
-   async _refreshAll() {
+  async _refreshAll() {
     await getCategories({cache: false});
     this.articles = undefined;
     this.render();
@@ -300,32 +289,30 @@ export default class WorldAnvilBrowser extends foundry.applications.api.Handleba
   /* -------------------------------------------- */
 
   /**
-   * Import or refresh an article, and then display it
-   * @param {string} categoryId     World Anvil article ID
+   * Import or refresh an article, and then display it.
+   * @param {string} articleId     World Anvil article ID
    */
-   async _syncEntry(articleId) {
+  async _syncEntry(articleId) {
     return importArticle(articleId, {categories: this.categories});
   }
 
   /* -------------------------------------------- */
 
   /**
-   * Make every related article of a category visible. Let child category as they are
+   * Make every article in a category visible to players. Child categories are unaffected.
    * @param {string} categoryId WA category id
    */
   async _displayFolder(categoryId) {
     const category = this.categories.get(categoryId);
     const articles = category?.articles ?? [];
-    const updates = articles.filter( a => {
-      return !a.entry?.ownership.default < CONST.DOCUMENT_OWNERSHIP_LEVELS.OBSERVER;
-    }).map( a => {
-      return {
-        _id: a.entry.id,
-        ownership: { default: CONST.DOCUMENT_OWNERSHIP_LEVELS.OBSERVER }
-      }
-    });
+    const updates = articles.filter(a => {
+      return !(a.entry?.ownership.default >= CONST.DOCUMENT_OWNERSHIP_LEVELS.OBSERVER);
+    }).map(a => ({
+      _id: a.entry.id,
+      ownership: { default: CONST.DOCUMENT_OWNERSHIP_LEVELS.OBSERVER }
+    }));
 
-    if( updates.length > 0 ) {
+    if ( updates.length > 0 ) {
       await JournalEntry.updateDocuments(updates, {diff: false, recursive: false, noHook: true});
     }
     this.render();
@@ -334,22 +321,20 @@ export default class WorldAnvilBrowser extends foundry.applications.api.Handleba
   /* -------------------------------------------- */
 
   /**
-   * Make every related article of a category hidden. Let child category as they are
+   * Make every article in a category hidden from players. Child categories are unaffected.
    * @param {string} categoryId WA category id
    */
   async _hideFolder(categoryId) {
     const category = this.categories.get(categoryId);
     const articles = category?.articles ?? [];
-    const updates = articles.filter( a => {
+    const updates = articles.filter(a => {
       return a.entry?.ownership.default >= CONST.DOCUMENT_OWNERSHIP_LEVELS.OBSERVER;
-    }).map( a => {
-      return {
-        _id: a.entry.id,
-        ownership: { default: CONST.DOCUMENT_OWNERSHIP_LEVELS.NONE }
-      }
-    });
+    }).map(a => ({
+      _id: a.entry.id,
+      ownership: { default: CONST.DOCUMENT_OWNERSHIP_LEVELS.NONE }
+    }));
 
-    if( updates.length > 0 ) {
+    if ( updates.length > 0 ) {
       await JournalEntry.updateDocuments(updates, {diff: false, recursive: false, noHook: true});
     }
     this.render();
@@ -358,36 +343,32 @@ export default class WorldAnvilBrowser extends foundry.applications.api.Handleba
   /* -------------------------------------------- */
 
   /**
-   * Make an article entry visibile for all players
+   * Make an article entry visible to all players.
    * @param {string} entryId Foundry journal entry id
    */
-   async _displayEntry(entryId) {
+  async _displayEntry(entryId) {
     const entry = game.journal.find(j => j.id === entryId) ?? null;
-    if( !entry ) { throw 'Can\'t find journal entry with id : ' + entryId; }
-
-    const perms = {
-      default: CONST.DOCUMENT_OWNERSHIP_LEVELS.OBSERVER
-    };
-
-    await entry.update({ownership: perms}, {diff: false, recursive: false, noHook: true});
+    if ( !entry ) throw new Error("Can't find journal entry with id: " + entryId);
+    await entry.update(
+      { ownership: { default: CONST.DOCUMENT_OWNERSHIP_LEVELS.OBSERVER } },
+      { diff: false, recursive: false, noHook: true }
+    );
     this.render();
   }
 
   /* -------------------------------------------- */
 
   /**
-   * Make an article entry hidden for all players
+   * Make an article entry hidden from all players.
    * @param {string} entryId Foundry journal entry id
    */
-   async _hideEntry(entryId) {
+  async _hideEntry(entryId) {
     const entry = game.journal.find(j => j.id === entryId) ?? null;
-    if( !entry ) { throw 'Can\'t find journal entry with id : ' + entryId; }
-
-    const perms = {
-      default: CONST.DOCUMENT_OWNERSHIP_LEVELS.NONE
-    };
-
-    await entry.update({ownership: perms}, {diff: false, recursive: false, noHook: true});
+    if ( !entry ) throw new Error("Can't find journal entry with id: " + entryId);
+    await entry.update(
+      { ownership: { default: CONST.DOCUMENT_OWNERSHIP_LEVELS.NONE } },
+      { diff: false, recursive: false, noHook: true }
+    );
     this.render();
   }
 
@@ -397,7 +378,6 @@ export default class WorldAnvilBrowser extends foundry.applications.api.Handleba
    * Import all articles contained within a single Category.
    * @param {Category} category           The Category for which we are importing content
    * @param {boolean} [sync=false]        Only sync articles which have already been imported
-   * @private
    */
   async _importCategory( category, {sync=false} = {} ) {
     ui.notifications.info(`Bulk importing articles in ${category.title}, please be patient.`);
@@ -406,14 +386,14 @@ export default class WorldAnvilBrowser extends foundry.applications.api.Handleba
       if ( sync && !article.entry ) continue;
       await importArticle(article.id, {categories: this.categories, notify: false, renderSheet: false});
     }
-    ui.notifications.info("Bulk article import completed successfully!")
+    ui.notifications.info("Bulk article import completed successfully!");
   }
 
   /* -------------------------------------------- */
 
   /**
    * Create an array of all articles which belong to a certain category node.
-   * Recursively add articles belonging to sub-categories.
+   * Recursively adds articles belonging to sub-categories.
    * @param {object} node Category tree branch. Can be the root element
    * @returns {object[]} All articles, with the ones from the upper leaf first
    */
@@ -431,32 +411,30 @@ export default class WorldAnvilBrowser extends foundry.applications.api.Handleba
   /* -------------------------------------------- */
 
   /**
-   * Calls ._calculateCategoryVisibility
-   * On first call will init ._collapsedCategories before calling it.
+   * Calls _calculateCategoryVisibility.
+   * On first call will init _collapsedCategories before calling it.
    */
   _refreshCategoryVisibility() {
-    if(this.#firstInit) {
+    if ( this.#firstInit ) {
       const firstLevelsIds = this.tree.children.map( c => c.id );
       firstLevelsIds.push(CATEGORY_ID.root);
 
       this._collapsedCategories = [];
       for ( const category of this.categories.values() ) {
-        if ( !firstLevelsIds.includes(category.id ) ) this._collapsedCategories.push(category.id);
+        if ( !firstLevelsIds.includes(category.id) ) this._collapsedCategories.push(category.id);
       }
     }
     this._calculateCategoryVisibility(this.tree);
     this.#firstInit = false;
   }
 
+  /* -------------------------------------------- */
+
   /**
-   * Recursive
-   * Set .displayVisibilityButtons, .visibleByPlayers, .hasChildrenWithContent, .hasContent
-   * Article visibility : default permission on article is at least OBSERVER
-   * Category visibility : is visible if it at least one of its articles is visible
-   * Category with content : Has some articles (visible or not) or has a child which have some
+   * Recursively set visibility flags on each category node.
    * @param {object} node Category tree branch. Can be the root element
    */
-   _calculateCategoryVisibility( node ) {
+  _calculateCategoryVisibility( node ) {
     node.children.forEach(child => this._calculateCategoryVisibility(child) );
     node.displayVisibilityButtons = node.folder && node.articles.findIndex( a => a.entry ) !== -1;
     node.visibleByPlayers = node.articles.findIndex( a => a.visibleByPlayers ) !== -1;
@@ -467,4 +445,3 @@ export default class WorldAnvilBrowser extends foundry.applications.api.Handleba
     node.hasBeenCollapsed = this._collapsedCategories.includes( node.id );
   }
 }
-

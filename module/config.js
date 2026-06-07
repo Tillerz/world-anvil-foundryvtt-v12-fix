@@ -1,48 +1,40 @@
 /**
- * A configuration sheet FormApplication to configure the World Anvil integration
+ * A configuration sheet to configure the World Anvil integration.
+ * Uses the ApplicationV2 API (Foundry v13+).
  */
-export default class WorldAnvilConfig extends foundry.applications.api.HandlebarsApplicationMixin(foundry.applications.api.ApplicationV2) {
+export default class WorldAnvilConfig extends foundry.applications.api.HandlebarsApplicationMixin(
+  foundry.applications.api.ApplicationV2
+) {
 
-  /** @override */
   static DEFAULT_OPTIONS = {
     id: "world-anvil-config",
     tag: "form",
+    window: {
+      title: "WA.ConfigureMenu",
+      icon: "fas fa-user-lock"
+    },
     position: {
       width: 600,
-      height: "auto",
-    },
-    window: {
-      contentClasses: ["standard-form"],
-      icon: "fas fa-settings"
+      height: "auto"
     },
     form: {
-      closeOnSubmit: false,
-      handler: WorldAnvilConfig.#onSubmit
+      handler: WorldAnvilConfig._onSubmit,
+      closeOnSubmit: false
     }
-  }
-  /** @override */
+  };
+
   static PARTS = {
     main: {
       template: "modules/world-anvil/templates/config.html"
     }
-  }
+  };
 
-	/* -------------------------------------------- */
-
-  /** @override */
-  get title() {
-    return game.i18n.localize("WA.ConfigureMenu");
-  }
-
-	/* -------------------------------------------- */
-
-  #closeOnSubmit=false;
+  /* -------------------------------------------- */
 
   /** @override */
-  async _prepareContext(_options) {
+  async _prepareContext(options) {
     const anvil = game.modules.get("world-anvil").anvil;
 
-    // Determine the configuration step
     let stepNumber = 0;
     let stepLabel = "WA.ConfigureStep3";
     if ( !anvil.user ) {
@@ -55,43 +47,40 @@ export default class WorldAnvilConfig extends foundry.applications.api.Handlebar
     }
     else stepNumber = 3;
 
-    // If we have reached step 3, we can safely close the form when it is submitted
-    this.#closeOnSubmit= stepNumber === 3;
-
-    // Maybe retrieve a list of world options
     if ( anvil.user && !anvil.worlds.length ) await anvil.getWorlds();
 
-    // Return the template data for rendering
     return {
-      stepLabel: stepLabel,
+      stepLabel,
       displayWorldChoices: stepNumber >= 2,
-      worlds: anvil.worlds,
-      worldId: anvil.worldId,
+      worlds: anvil.worlds.map(w => ({...w, selected: w.id === anvil.worldId})),
       authToken: anvil.authToken
     };
   }
 
-	/* -------------------------------------------- */
+  /* -------------------------------------------- */
 
-  /** @override */
-  static async #onSubmit(event, form, formData) {
-    formData.object.authToken = formData.object.authToken.trim();
-    await game.settings.set("world-anvil", "configuration", formData.object);
-    if(this.#closeOnSubmit){
-      this.close();
-    } else {
-      this.render();
-    }
+  /**
+   * Handle form submission. `this` is bound to the application instance.
+   * @param {SubmitEvent} event
+   * @param {HTMLFormElement} form
+   * @param {FormDataExtended} formData
+   */
+  static async _onSubmit(event, form, formData) {
+    const data = foundry.utils.expandObject(formData.object);
+    data.authToken = data.authToken.trim();
+    await game.settings.set("world-anvil", "configuration", data);
+    // Close after step 3 (user authenticated and world selected)
+    const anvil = game.modules.get("world-anvil").anvil;
+    if ( anvil.user && anvil.worldId ) await this.close();
   }
 
-	/* -------------------------------------------- */
+  /* -------------------------------------------- */
 
   /**
    * Register game settings and menus for managing the World Anvil integration.
    */
   static registerSettings() {
 
-    // World Anvil Configuration Menu
     game.settings.registerMenu("world-anvil", "config", {
       name: "WA.ConfigureMenu",
       label: "WA.ConfigureLabel",
@@ -101,7 +90,6 @@ export default class WorldAnvilConfig extends foundry.applications.api.Handlebar
       restricted: true
     });
 
-    // Auth User Key
     game.settings.register("world-anvil", "configuration", {
       scope: "world",
       config: false,
@@ -111,8 +99,8 @@ export default class WorldAnvilConfig extends foundry.applications.api.Handlebar
         const anvil = game.modules.get("world-anvil").anvil;
         if ( c.authToken !== anvil.authToken ) await anvil.connect(c.authToken);
         if ( c.worldId !== anvil.worldId ) await anvil.getWorld(c.worldId);
-        const app = Object.values(ui.windows).find(a => a.constructor === WorldAnvilConfig);
-        if ( app ) app.render();
+        const app = foundry.applications.instances.get("world-anvil-config");
+        if ( app?.rendered ) app.render();
       }
     });
 
@@ -125,22 +113,9 @@ export default class WorldAnvilConfig extends foundry.applications.api.Handlebar
       config: true
     });
 
-    // Add the customizable labels for allowing article blocks
-    //-------------------
-    game.settings.register("world-anvil", "includeArticleBlocks", {
-      name: "WA.IncludeArticleBlocksLabel",
-      hint: "WA.IncludeArticleBlocksHint",
-      scope: "world",
-      type: Boolean,
-      default: false,
-      config: true
-    });
-
-    // Add the customizable labels for each importable page
-    //-------------------
     game.settings.register("world-anvil", "mainArticlePage", {
-      name: "WA.JournalPages.MainArticleLabel",
-      hint: "WA.JournalPages.MainArticleHint",
+      name: "WA.JournalPages.ArticleLabel",
+      hint: "WA.JournalPages.ArticleHint",
       scope: "world",
       type: String,
       default: "",
@@ -173,14 +148,6 @@ export default class WorldAnvilConfig extends foundry.applications.api.Handlebar
       default: "",
       config: true
     });
-    game.settings.register("world-anvil", "organizationFlagPage", {
-      name: "WA.JournalPages.OrganizationFlagLabel",
-      hint: "WA.JournalPages.OrganizationFlagHint",
-      scope: "world",
-      type: String,
-      default: "",
-      config: true
-    });
 
     game.settings.register("world-anvil", "coverPage", {
       name: "WA.JournalPages.CoverLabel",
@@ -199,15 +166,5 @@ export default class WorldAnvilConfig extends foundry.applications.api.Handlebar
       default: "",
       config: true
     });
-
-    game.settings.register("world-anvil", "timelinePage", {
-      name: "WA.JournalPages.TimelineLabel",
-      hint: "WA.JournalPages.TimelineHint",
-      scope: "world",
-      type: String,
-      default: "",
-      config: true
-    });
-
   }
 }
